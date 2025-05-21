@@ -148,3 +148,79 @@ void vul_kamers(Dungeon *d) {
         }
     }
 }
+void voer_gevecht_uit(Speler *s, Monster *m) {
+    printf("\nEr is een %s in de kamer! (%d HP, %d damage)\n", m->naam, m->hp, m->damage);
+    printf("Gevecht begint!\n");
+    
+    while (1) {
+        int bits = rand() % 16;
+        printf("\nAanvalvolgorde: ");
+        for (int i = 3; i >= 0; i--) printf("%d", (bits >> i) & 1);
+        printf("\n");
+
+        for (int i = 3; i >= 0; i--) {
+            if ((bits >> i) & 1) {
+                m->hp -= s->damage;
+                if (m->hp > 0) {
+                    printf("- Je raakt de %s voor %d damage (%d HP over)\n", m->naam, s->damage, m->hp);
+                } else {
+                    printf("- Je verslaat de %s!\n", m->naam);
+                    free(m);
+                    return;
+                }
+            } else {
+                s->hp -= m->damage;
+                printf("- De %s raakt je voor %d damage (%d/%d HP)\n", m->naam, m->damage, s->hp, s->max_hp);
+                if (s->hp <= 0) {
+                    printf("\nJe bent verslagen! Game Over!\n");
+                    exit(0);
+                }
+            }
+        }
+    }
+}
+
+Kamer *huidige_kamer(Dungeon *d, Speler *s) {
+    return d->kamers[s->huidige_kamer_id];
+}
+
+void toon_deuren(Kamer *k) {
+    printf("\nBeschikbare deuren:");
+    for (Verbinding *v = k->verbindingen; v != NULL; v = v->volgende) {
+        printf(" %d%s", v->doel->id, v->doel->bezocht ? "" : "*");
+    }
+    printf("\n(* = nog niet bezocht)\n");
+}
+
+void behandel_kamer(Kamer *k, Speler *s) {
+    printf("\n=== Kamer %d ===\n", k->id);
+    
+    if (k->bezocht) {
+        printf("Je bent hier al eerder geweest.\n");
+    } else {
+        k->bezocht = 1;
+
+        if (k->heeft_schat) {
+            printf("\nGEFELICITEERD! Je hebt de schat gevonden!\n");
+            exit(0);
+        }
+
+        if (k->monster) {
+            voer_gevecht_uit(s, k->monster);
+            k->monster = NULL;
+        }
+
+        if (k->item) {
+            printf("\nJe vindt een %s!\n", k->item->naam);
+            k->item->effect(s);
+            free(k->item);
+            k->item = NULL;
+        }
+        
+        if (!k->monster && !k->item && !k->heeft_schat) {
+            printf("De kamer is leeg.\n");
+        }
+    }
+    
+    printf("\nStatus: HP %d/%d | Damage: %d\n", s->hp, s->max_hp, s->damage);
+}
