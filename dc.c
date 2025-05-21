@@ -261,3 +261,53 @@ void spel_loop(Dungeon *d, Speler *s) {
         }
     }
 }
+void cleanup(Dungeon *d, Speler *s) {
+    for (int i = 0; i < d->aantal_kamers; i++) {
+        Kamer *k = d->kamers[i];
+        Verbinding *v = k->verbindingen;
+        while (v) {
+            Verbinding *next = v->volgende;
+            free(v);
+            v = next;
+        }
+        if (k->monster) free(k->monster);
+        if (k->item) free(k->item);
+        free(k);
+    }
+    free(d->kamers);
+    free(d);
+    free(s);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("Gebruik: %s -n [aantal_kamers] of -l [bestand]\n", argv[0]);
+        return 1;
+    }
+
+    Dungeon *dungeon = NULL;
+    Speler *speler = NULL;
+
+    if (strcmp(argv[1], "-n") == 0) {
+        int aantal = atoi(argv[2]);
+        if (aantal < 5) {
+            printf("Minimaal 5 kamers nodig\n");
+            return 1;
+        }
+        
+        printf("\nGenereren van dungeon met %d kamers...\n", aantal);
+        dungeon = genereer_dungeon(aantal);
+        plaats_schat(dungeon);
+        vul_kamers(dungeon);
+        speler = maak_speler();
+    } else if (strcmp(argv[1], "-l") == 0) {
+        printf("\nLaden van spel...\n");
+        dungeon = genereer_dungeon(10);  // Placeholder
+        speler = maak_speler();
+    }
+
+    printf("\n=== DUNGEON CRAWLER ===\n");
+    spel_loop(dungeon, speler);
+    cleanup(dungeon, speler);
+    return 0;
+}
