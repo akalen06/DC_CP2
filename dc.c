@@ -110,3 +110,41 @@ Speler *maak_speler() {
     s->damage = 5;
     return s;
 }
+void herstel_effect(Speler *s) {
+    s->hp = s->max_hp;
+    printf("HP hersteld naar %d/%d!\n", s->hp, s->max_hp);
+}
+
+void verhoog_damage(Speler *s) {
+    s->damage += 2;
+    printf("Damage verhoogd naar %d!\n", s->damage);
+}
+
+Monster *maak_monster(char *naam, int hp, int dmg) {
+    Monster *m = malloc(sizeof(Monster));
+    m->naam = naam;
+    m->hp = hp;
+    m->damage = dmg;
+    return m;
+}
+
+Item *maak_item(char *naam, void (*effect)(Speler *)) {
+    Item *i = malloc(sizeof(Item));
+    i->naam = naam;
+    i->effect = effect;
+    return i;
+}
+
+void vul_kamers(Dungeon *d) {
+    for (int i = 0; i < d->aantal_kamers; i++) {
+        Kamer *k = d->kamers[i];
+        if (k->heeft_schat) continue;
+
+        int kans = rand() % 100;
+        if (kans < 50) {
+            k->monster = (rand() % 2) ? maak_monster("Goblin", 8, 3) : maak_monster("Trol", 15, 5);
+        } else if (kans < 75) {
+            k->item = (rand() % 2) ? maak_item("Health Potion", herstel_effect) : maak_item("Power Ring", verhoog_damage);
+        }
+    }
+}
