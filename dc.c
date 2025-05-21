@@ -224,3 +224,40 @@ void behandel_kamer(Kamer *k, Speler *s) {
     
     printf("\nStatus: HP %d/%d | Damage: %d\n", s->hp, s->max_hp, s->damage);
 }
+void spel_loop(Dungeon *d, Speler *s) {
+    while (1) {
+        Kamer *huidige = huidige_kamer(d, s);
+        behandel_kamer(huidige, s);
+        toon_deuren(huidige);
+
+        printf("\nKies een deur (of 'q' om te stoppen): ");
+        char input[10];
+        fgets(input, sizeof(input), stdin);
+        
+        if (input[0] == 'q') {
+            printf("\nSpel afgesloten.\n");
+            exit(0);
+        }
+
+        int keuze;
+        if (sscanf(input, "%d", &keuze) != 1) {
+            printf("Ongeldige invoer!\n");
+            continue;
+        }
+
+        int geldig = 0;
+        for (Verbinding *v = huidige->verbindingen; v; v = v->volgende) {
+            if (v->doel->id == keuze) {
+                geldig = 1;
+                break;
+            }
+        }
+
+        if (geldig) {
+            s->huidige_kamer_id = keuze;
+            printf("\nJe loopt naar kamer %d...\n", keuze);
+        } else {
+            printf("Er is geen deur naar kamer %d!\n", keuze);
+        }
+    }
+}
