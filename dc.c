@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 // --- Structs ---
 typedef struct Speler Speler;
@@ -43,6 +44,9 @@ struct Speler {
     int max_hp;
     int damage;
 };
+
+#define SAVE_FILE "dungeon_save.dat"
+
 // --- Functies ---
 Kamer *maak_kamer(int id) {
     Kamer *kamer = malloc(sizeof(Kamer));
@@ -110,6 +114,7 @@ Speler *maak_speler() {
     s->damage = 5;
     return s;
 }
+
 void herstel_effect(Speler *s) {
     s->hp = s->max_hp;
     printf("HP hersteld naar %d/%d!\n", s->hp, s->max_hp);
@@ -122,7 +127,7 @@ void verhoog_damage(Speler *s) {
 
 Monster *maak_monster(char *naam, int hp, int dmg) {
     Monster *m = malloc(sizeof(Monster));
-    m->naam = naam;
+    m->naam = strdup(naam);
     m->hp = hp;
     m->damage = dmg;
     return m;
@@ -130,7 +135,7 @@ Monster *maak_monster(char *naam, int hp, int dmg) {
 
 Item *maak_item(char *naam, void (*effect)(Speler *)) {
     Item *i = malloc(sizeof(Item));
-    i->naam = naam;
+    i->naam = strdup(naam);
     i->effect = effect;
     return i;
 }
@@ -148,6 +153,7 @@ void vul_kamers(Dungeon *d) {
         }
     }
 }
+
 void voer_gevecht_uit(Speler *s, Monster *m) {
     printf("\nEr is een %s in de kamer! (%d HP, %d damage)\n", m->naam, m->hp, m->damage);
     printf("Gevecht begint!\n");
@@ -165,6 +171,7 @@ void voer_gevecht_uit(Speler *s, Monster *m) {
                     printf("- Je raakt de %s voor %d damage (%d HP over)\n", m->naam, s->damage, m->hp);
                 } else {
                     printf("- Je verslaat de %s!\n", m->naam);
+                    free(m->naam);
                     free(m);
                     return;
                 }
@@ -202,6 +209,7 @@ void behandel_kamer(Kamer *k, Speler *s) {
 
         if (k->heeft_schat) {
             printf("\nGEFELICITEERD! Je hebt de schat gevonden!\n");
+            remove(SAVE_FILE); // Verwijder save bij winst
             exit(0);
         }
 
@@ -213,6 +221,7 @@ void behandel_kamer(Kamer *k, Speler *s) {
         if (k->item) {
             printf("\nJe vindt een %s!\n", k->item->naam);
             k->item->effect(s);
+            free(k->item->naam);
             free(k->item);
             k->item = NULL;
         }
@@ -224,19 +233,170 @@ void behandel_kamer(Kamer *k, Speler *s) {
     
     printf("\nStatus: HP %d/%d | Damage: %d\n", s->hp, s->max_hp, s->damage);
 }
+
+void save_game(Dungeon *d, Speler *s) {
+    FILE *file = fopen(SAVE_FILE, "wb");
+    if (!file) {
+        perror("Fout bij openen save bestand");
+        return;
+    }
+
+    // Schrijf dungeon basisinfo
+    fwrite(&d->aantal_kamers, sizeof(int), 1, file);
+
+    // Schrijf speler data
+    fwrite(s, sizeof(Speler), 1, file);
+
+    // Schrijf elke kamer
+    for (int i = 0; i < d->aantal_kamers; i++) {
+        Kamer *k = d->kamers[i];
+        fwrite(&k->id, sizeof(int), 1, file);
+        fwrite(&k->heeft_schat, sizeof(int), 1, file);
+        fwrite(&k->bezocht, sizeof(int), 1, file);
+
+        // Schrijf monster data (indien aanwezig)
+        int heeft_monster = (k->monster != NULL);
+        fwrite(&heeft_monster, sizeof(int), 1, file);
+        if (heeft_monster) {
+            int naam_len = strlen(k->monster->naam) + 1;
+            fwrite(&naam_len, sizeof(int), 1, file);
+            fwrite(k->monster->naam, sizeof(char), naam_len, file);
+            fwrite(&k->monster->hp, sizeof(int), 1, file);
+            fwrite(&k->monster->damage, sizeof(int), 1, file);
+        }
+
+        // Schrijf item data (indien aanwezig)
+        int heeft_item = (k->item != NULL);
+        fwrite(&heeft_item, sizeof(int), 1, file);
+        if (heeft_item) {
+            int naam_len = strlen(k->item->naam) + 1;
+            fwrite(&naam_len, sizeof(int), 1, file);
+            fwrite(k->item->naam, sizeof(char), naam_len, file);
+            // Sla item type op (0=health, 1=damage)
+            int item_type = (k->item->effect == herstel_effect) ? 0 : 1;
+            fwrite(&item_type, sizeof(int), 1, file);
+        }
+    }
+
+    // Schrijf verbindingen
+    for (int i = 0; i < d->aantal_kamers; i++) {
+        Kamer *k = d->kamers[i];
+        int aantal_verbindingen = 0;
+        for (Verbinding *v = k->verbindingen; v; v = v->volgende) {
+            aantal_verbindingen++;
+        }
+        fwrite(&aantal_verbindingen, sizeof(int), 1, file);
+
+        for (Verbinding *v = k->verbindingen; v; v = v->volgende) {
+            fwrite(&v->doel->id, sizeof(int), 1, file);
+        }
+    }
+
+    fclose(file);
+    printf("\nSpel opgeslagen!\n");
+}
+
+int load_game(Dungeon **d, Speler **s) {
+    FILE *file = fopen(SAVE_FILE, "rb");
+    if (!file) {
+        return 0;
+    }
+
+    // Lees dungeon basisinfo
+    int aantal_kamers;
+    fread(&aantal_kamers, sizeof(int), 1, file);
+
+    // Maak nieuwe dungeon en speler
+    *d = malloc(sizeof(Dungeon));
+    (*d)->aantal_kamers = aantal_kamers;
+    (*d)->kamers = malloc(sizeof(Kamer *) * aantal_kamers);
+    
+    *s = malloc(sizeof(Speler));
+    fread(*s, sizeof(Speler), 1, file);
+
+    // Lees kamers
+    for (int i = 0; i < aantal_kamers; i++) {
+        Kamer *k = maak_kamer(i);
+        (*d)->kamers[i] = k;
+
+        fread(&k->id, sizeof(int), 1, file);
+        fread(&k->heeft_schat, sizeof(int), 1, file);
+        fread(&k->bezocht, sizeof(int), 1, file);
+
+        // Lees monster
+        int heeft_monster;
+        fread(&heeft_monster, sizeof(int), 1, file);
+        if (heeft_monster) {
+            int naam_len;
+            fread(&naam_len, sizeof(int), 1, file);
+            char *naam = malloc(naam_len);
+            fread(naam, sizeof(char), naam_len, file);
+            
+            int hp, damage;
+            fread(&hp, sizeof(int), 1, file);
+            fread(&damage, sizeof(int), 1, file);
+            
+            k->monster = malloc(sizeof(Monster));
+            k->monster->naam = naam;
+            k->monster->hp = hp;
+            k->monster->damage = damage;
+        }
+
+        // Lees item
+        int heeft_item;
+        fread(&heeft_item, sizeof(int), 1, file);
+        if (heeft_item) {
+            int naam_len;
+            fread(&naam_len, sizeof(int), 1, file);
+            char *naam = malloc(naam_len);
+            fread(naam, sizeof(char), naam_len, file);
+            
+            int item_type;
+            fread(&item_type, sizeof(int), 1, file);
+            
+            k->item = malloc(sizeof(Item));
+            k->item->naam = naam;
+            k->item->effect = (item_type == 0) ? herstel_effect : verhoog_damage;
+        }
+    }
+
+    // Lees verbindingen
+    for (int i = 0; i < aantal_kamers; i++) {
+        Kamer *k = (*d)->kamers[i];
+        int aantal_verbindingen;
+        fread(&aantal_verbindingen, sizeof(int), 1, file);
+
+        for (int j = 0; j < aantal_verbindingen; j++) {
+            int doel_id;
+            fread(&doel_id, sizeof(int), 1, file);
+            
+            Verbinding *nieuw = malloc(sizeof(Verbinding));
+            nieuw->doel = (*d)->kamers[doel_id];
+            nieuw->volgende = k->verbindingen;
+            k->verbindingen = nieuw;
+        }
+    }
+
+    fclose(file);
+    return 1;
+}
+
 void spel_loop(Dungeon *d, Speler *s) {
     while (1) {
         Kamer *huidige = huidige_kamer(d, s);
         behandel_kamer(huidige, s);
         toon_deuren(huidige);
 
-        printf("\nKies een deur (of 'q' om te stoppen): ");
+        printf("\nKies een deur, 's' om op te slaan, of 'q' om te stoppen: ");
         char input[10];
         fgets(input, sizeof(input), stdin);
         
         if (input[0] == 'q') {
             printf("\nSpel afgesloten.\n");
             exit(0);
+        } else if (input[0] == 's') {
+            save_game(d, s);
+            continue;
         }
 
         int keuze;
@@ -261,6 +421,7 @@ void spel_loop(Dungeon *d, Speler *s) {
         }
     }
 }
+
 void cleanup(Dungeon *d, Speler *s) {
     for (int i = 0; i < d->aantal_kamers; i++) {
         Kamer *k = d->kamers[i];
@@ -270,8 +431,14 @@ void cleanup(Dungeon *d, Speler *s) {
             free(v);
             v = next;
         }
-        if (k->monster) free(k->monster);
-        if (k->item) free(k->item);
+        if (k->monster) {
+            free(k->monster->naam);
+            free(k->monster);
+        }
+        if (k->item) {
+            free(k->item->naam);
+            free(k->item);
+        }
         free(k);
     }
     free(d->kamers);
@@ -280,33 +447,62 @@ void cleanup(Dungeon *d, Speler *s) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        printf("Gebruik: %s -n [aantal_kamers] of -l [bestand]\n", argv[0]);
-        return 1;
-    }
-
     Dungeon *dungeon = NULL;
     Speler *speler = NULL;
+    int loaded = 0;
 
-    if (strcmp(argv[1], "-n") == 0) {
-        int aantal = atoi(argv[2]);
-        if (aantal < 5) {
-            printf("Minimaal 5 kamers nodig\n");
+    // Check voor save file bij opstart
+    if (access(SAVE_FILE, F_OK) == 0) {
+        printf("\nEr is een opgeslagen spel gevonden. Wil je:\n");
+        printf("1. Het opgeslagen spel laden\n");
+        printf("2. Een nieuw spel starten\n");
+        printf("Keuze: ");
+        
+        int keuze;
+        if (scanf("%d", &keuze) != 1) {
+            printf("Ongeldige invoer\n");
             return 1;
         }
+        getchar(); // Newline consumeren
         
-        printf("\nGenereren van dungeon met %d kamers...\n", aantal);
-        dungeon = genereer_dungeon(aantal);
-        plaats_schat(dungeon);
-        vul_kamers(dungeon);
-        speler = maak_speler();
-    } else if (strcmp(argv[1], "-l") == 0) {
-        printf("\nLaden van spel...\n");
-        dungeon = genereer_dungeon(10);  // Placeholder
-        speler = maak_speler();
+        if (keuze == 1) {
+            loaded = load_game(&dungeon, &speler);
+            if (!loaded) {
+                printf("Fout bij laden van spel. Nieuw spel starten...\n");
+            } else {
+                printf("Spel geladen!\n");
+            }
+        }
+    }
+
+    if (!loaded) {
+        if (argc < 3) {
+            printf("Gebruik: %s -n [aantal_kamers]\n", argv[0]);
+            return 1;
+        }
+
+        if (strcmp(argv[1], "-n") == 0) {
+            int aantal = atoi(argv[2]);
+            if (aantal < 5) {
+                printf("Minimaal 5 kamers nodig\n");
+                return 1;
+            }
+            
+            printf("\nGenereren van dungeon met %d kamers...\n", aantal);
+            dungeon = genereer_dungeon(aantal);
+            plaats_schat(dungeon);
+            vul_kamers(dungeon);
+            speler = maak_speler();
+        } else {
+            printf("Ongeldige optie.\n");
+            return 1;
+        }
     }
 
     printf("\n=== DUNGEON CRAWLER ===\n");
+    printf("Je start in kamer %d. Zoek de schat!\n", speler->huidige_kamer_id);
+    printf("Gebruik 's' om op te slaan, 'q' om te stoppen.\n\n");
+    
     spel_loop(dungeon, speler);
     cleanup(dungeon, speler);
     return 0;
